@@ -145,12 +145,14 @@ var sc_security="f70ed11a";
   </div>
 </div>
 
-<div id="exit-popup"><h3>Leave this site?</h3>
+<div id="exit-popup" style="display:none;">
+  <h3>Leave this site?</h3>
   <p style="font-size: large">Are you sure you want to leave this page?</p>
   <div class="btn-wrapper">
-    <button class="btn_leave" style="font-size: large">Leave</button>
-    <button class="btn_cancel" style="font-size: large">Cancel</button>
+    <button class="btn_leave" id="exit_leave" style="font-size: large">Leave</button>
+    <button class="btn_cancel" id="exit_cancel" style="font-size: large">Cancel</button>
   </div>
+</div>
 </div>
 
 <script type="text/javascript" src="js/jquery-1.4.4.min.js"></script>
